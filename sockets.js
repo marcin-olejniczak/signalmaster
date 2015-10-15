@@ -2,6 +2,8 @@ var socketIO = require('socket.io'),
     uuid = require('node-uuid'),
     crypto = require('crypto');
 
+var clients_types = {};
+
 module.exports = function (server, config) {
     var io = socketIO.listen(server);
 
@@ -52,18 +54,37 @@ module.exports = function (server, config) {
             }
         }
 
-        function join(name, cb) {
+        function join(name, type, cb) {
             // sanity check
             if (typeof name !== 'string') return;
             // check if maximum number of clients reached
+            var clients_in_room = io.sockets.clients(name);
             if (config.rooms && config.rooms.maxClients > 0 &&
-                clientsInRoom(name) >= config.rooms.maxClients) {
+                clients_in_room.length >= config.rooms.maxClients) {
                 safeCb(cb)('full');
                 return;
             }
             // leave any existing rooms
             removeFeed();
             safeCb(cb)(null, describeRoom(name));
+            
+            // ask user-provider in room if other user-patient can join
+            if (type === 'patient'){
+                console.log('Room ' + name);
+                console.log(client.id + ' of type  ' + type + ' tries to enter');
+                // get providers in room
+                console.log('clients in room ');
+                for (key in clients_in_room){
+                    var obj = clients_in_room[key];
+                    if(clients_types[obj.id] === 'provider'){
+                        // ask for confirmation
+                    }
+                }
+            }else{
+                type = 'provider';
+            }
+            clients_types[client.id]=type;
+            
             client.join(name);
             client.room = name;
         }
@@ -71,9 +92,17 @@ module.exports = function (server, config) {
         // we don't want to pass "leave" directly because the
         // event type string of "socket end" gets passed too.
         client.on('disconnect', function () {
+            //remove client from clients_types list
+            if(clients_types[client.id]){
+                delete clients_types[client.id]
+            }
             removeFeed();
         });
         client.on('leave', function () {
+            //remove client from clients_types list
+            if(clients_types[client.id]){
+                delete clients_types[client.id]
+            }
             removeFeed();
         });
 
