@@ -53,6 +53,13 @@ module.exports = function (server, config) {
                     client.room = undefined;
                 }
             }
+            //remove client from queues
+            if(clients_types[client.id]){
+                delete clients_types[client.id]
+            }
+            if(waiting_clients[client.id]){
+                delete waiting_clients[client.id]
+            }
         }
 
         function join(name, type, cb) {
@@ -70,10 +77,16 @@ module.exports = function (server, config) {
             
             // ask user-provider in room if other user-patient can join
             console.log(client.id + ' of type  ' + type + ' tries to enter');
+            console.log('Room ' + name);
+            console.log('Waiting clients ' + Object.keys(waiting_clients).length);
             if (type === 'patient'){
-                console.log('Room ' + name);
+                waiting_clients[client.id] = {
+                    id: client.id,
+                    client: client,
+                    room_name: name,
+                    cb: cb,
+                }
                 // get providers in room
-                console.log('clients in room ---');
                 for (key in clients_in_room){
                     var obj = clients_in_room[key];
                     console.log(obj.id);
@@ -82,45 +95,48 @@ module.exports = function (server, config) {
                         patient_data = {
                             'id': client.id,
                         }
-                        waiting_clients[client.id] = {
-                            client: client,
-                            room_name: name,
-                        }
                         console.log('emit patient-offer to ' + obj.id);
                         obj.emit('patient-offer', patient_data);
                     }
                 }
             }else{
                 type = 'provider';
-                safeCb(cb)(null, describeRoom(name));
                 client.join(name);
                 client.room = name;
+                // if there are other waiting clients join them automatically
+                if (Object.keys(waiting_clients).length > 0){
+                    for (key in waiting_clients){
+                        var patient = waiting_clients[key];
+                        if(patient.room_name === name){
+                            //client waits in the same room as provider
+                            joinClientToRoom(patient);
+                        }
+                    }
+                }else{
+                    safeCb(cb)(null, describeRoom(name));
+                }
             }
             clients_types[client.id]=type;
         }
 
         // patient was accepted by provider
-        client.on('patient-accepted', function(client_id){
+        client.on('patient-accept', function(client_id, cb){
+            console.log('patient-acceptation');
             var patient = waiting_clients[client_id];
-            patient.client.join(patient.room_name);
-            patient.client.room = patient.room_name;
-            delete waiting_clients[client_id];
+            if(!patient){
+                safeCb(cb)({'error': 'patient not found'});
+            }
+            joinClientToRoom(patient);
+            // 
+            safeCb(cb)(null);
         });
 
         // we don't want to pass "leave" directly because the
         // event type string of "socket end" gets passed too.
         client.on('disconnect', function () {
-            //remove client from clients_types list
-            if(clients_types[client.id]){
-                delete clients_types[client.id]
-            }
             removeFeed();
         });
         client.on('leave', function () {
-            //remove client from clients_types list
-            if(clients_types[client.id]){
-                delete clients_types[client.id]
-            }
             removeFeed();
         });
 
@@ -170,6 +186,13 @@ module.exports = function (server, config) {
         client.emit('turnservers', credentials);
     });
 
+    function joinClientToRoom(obj){
+        // patient callback
+        safeCb(obj.cb)(null, describeRoom(obj.room_name));
+        obj.client.join(obj.room_name);
+        obj.client.room = obj.room_name;
+        delete waiting_clients[obj.id];
+    }
 
     function describeRoom(name) {
         var clients = io.sockets.clients(name);
