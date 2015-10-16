@@ -3,6 +3,7 @@ var socketIO = require('socket.io'),
     crypto = require('crypto');
 
 var clients_types = {};
+var waiting_clients = {};
 
 module.exports = function (server, config) {
     var io = socketIO.listen(server);
@@ -66,28 +67,45 @@ module.exports = function (server, config) {
             }
             // leave any existing rooms
             removeFeed();
-            safeCb(cb)(null, describeRoom(name));
             
             // ask user-provider in room if other user-patient can join
+            console.log(client.id + ' of type  ' + type + ' tries to enter');
             if (type === 'patient'){
                 console.log('Room ' + name);
-                console.log(client.id + ' of type  ' + type + ' tries to enter');
                 // get providers in room
-                console.log('clients in room ');
+                console.log('clients in room ---');
                 for (key in clients_in_room){
                     var obj = clients_in_room[key];
+                    console.log(obj.id);
                     if(clients_types[obj.id] === 'provider'){
                         // ask for confirmation
+                        patient_data = {
+                            'id': client.id,
+                        }
+                        waiting_clients[client.id] = {
+                            client: client,
+                            room_name: name,
+                        }
+                        console.log('emit patient-offer to ' + obj.id);
+                        obj.emit('patient-offer', patient_data);
                     }
                 }
             }else{
                 type = 'provider';
+                safeCb(cb)(null, describeRoom(name));
+                client.join(name);
+                client.room = name;
             }
             clients_types[client.id]=type;
-            
-            client.join(name);
-            client.room = name;
         }
+
+        // patient was accepted by provider
+        client.on('patient-accepted', function(client_id){
+            var patient = waiting_clients[client_id];
+            patient.client.join(patient.room_name);
+            patient.client.room = patient.room_name;
+            delete waiting_clients[client_id];
+        });
 
         // we don't want to pass "leave" directly because the
         // event type string of "socket end" gets passed too.
